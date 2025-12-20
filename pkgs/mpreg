@@ -1,159 +1,730 @@
-#!/usr/bin/python3
-# `mpreg` program by ANW for MrrpOS v3
-# The MrrpOS package/misc downloader
+#!/usr/bin/env python3
+# mpreg v7 – MrrpOS Package REGistrar
+# By ANW for MrrpOS
 
-import requests
+from __future__ import annotations
+import argparse
+import json
 import os
+import shutil
+import subprocess
 import sys
+import time
+import hashlib
+from pathlib import Path
+from typing import Dict, Any, Optional, Tuple
 
-print("/------------------------------------------------------\\")
-print("| mpreg v3 - The MrrpOS package/misc. files downloader |")
-print("| By ANW, for MrrpOS. (https://anw.is-a.dev)           |")
-print("\\------------------------------------------------------/\n")
+# External libs
+try:
+    import requests
+except Exception:
+    print("[ ERROR ] Missing MrrpOS system Python dependency: requests. Install with: pip3 install requests", file=sys.stderr)
+    print("[ INFO  ] The above error might be caused by tampering with MrrpOS.")
+    raise SystemExit(1)
+
+try:
+    from colorama import init as colorama_init, Fore, Style
+except Exception:
+    print("[ ERROR ] Missing MrrpOS system Python dependency: colorama. Install with: pip3 install colorama", file=sys.stderr)
+    print("[ INFO  ] The above error might be caused by tampering with MrrpOS.")
+    raise SystemExit(1)
+
+# Initialize colorama
+colorama_init(autoreset=True)
+
+# =========================
+# Configuration
+# =========================
+BASE = Path("/etc/mpreg")
+PKG_DIR = BASE / "pkgs"
+MISC_DIR = BASE / "misc"
+CACHE_DIR = BASE / "cache"
+INSTALLED_FILE = BASE / "installed.json"
 
 PACKAGE_LIST_URL = "https://mrrpos.pages.dev/pkgs/pkg-list.json"
 MISC_LIST_URL = "https://mrrpos.pages.dev/misc/misc-list.json"
+HEADERS = {"User-Agent": "mpreg/7 (MrrpOS)"}
 
-if not (os.path.isdir("/etc/mpreg/pkgs") and os.path.isdir("/etc/mpreg/misc")):
-    os.system("mkdir -p /etc/mpreg")
-    os.system("mkdir -p /etc/mpreg/pkgs")
-    os.system("mkdir -p /etc/mpreg/misc")
+CHUNK = 8192
+DOWNLOAD_TIMEOUT = 20
+TIMEOUT = 10
 
-def fetch_json_data(url):
+# =========================
+# Banner/header
+# =========================
+def print_header():
+    print(Fore.WHITE + Style.BRIGHT + "+--------------------------------------------------------+")
+    print(Fore.WHITE + Style.BRIGHT + "| [ mpreg v7 - The MrrpOS package manager. ]             |")
+    print(Fore.WHITE + Style.BRIGHT + "| If any issues found, please contact MrrpOS devs.       |")
+    print(Fore.WHITE + Style.BRIGHT + "| By ANW, for MrrpOS. (https://anw.is-a.dev)             |")
+    print(Fore.WHITE + Style.BRIGHT + "| Special thanks: GattoDev for https://mrrpos.pages.dev! |")
+    print(Fore.WHITE + Style.BRIGHT + "+--------------------------------------------------------+\n")
+
+# =========================
+# Utilities
+# =========================
+def ensure_dirs() -> None:
+    for d in (BASE, PKG_DIR, MISC_DIR, CACHE_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+    if not INSTALLED_FILE.exists():
+        INSTALLED_FILE.write_text(json.dumps({}, indent=2))
+
+def load_installed() -> Dict[str, Any]:
     try:
-        response = requests.get(url)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching data from {url}: {e}", file=sys.stderr)
+        return json.loads(INSTALLED_FILE.read_text())
+    except Exception:
+        return {}
+
+def save_installed(state: Dict[str, Any]) -> None:
+    INSTALLED_FILE.write_text(json.dumps(state, indent=2))
+
+def safe_name(name: str) -> str:
+    ok = "._- "
+    s = "".join(c for c in name if c.isalnum() or c in ok).strip()
+    if not s:
+        s = "pkg"
+    return s.replace(" ", "_")
+
+def pretty(obj: Any) -> str:
+    return json.dumps(obj, indent=4, sort_keys=True)
+
+# =========================
+# Networking & caching
+# =========================
+def fetch_json(url: str) -> Optional[Dict[str, Any]]:
+    cache = CACHE_DIR / Path(url).name
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+        try:
+            cache.write_text(json.dumps(data, indent=2))
+        except Exception:
+            pass
+        return data
+    except Exception:
+        # fallback to cache
+        if cache.exists():
+            try:
+                return json.loads(cache.read_text())
+            except Exception:
+                pass
+        print(Fore.YELLOW + "[ WARN  ] Could not fetch or parse remote JSON, and cache unavailable.")
         return None
 
-def download_file(url, destination_folder=".", filename=None):
-    if not os.path.exists(destination_folder):
-        os.makedirs(destination_folder)
+# =========================
+# Progress bar
+# =========================
+def ascii_progress(downloaded: int, total: int, width: int = 40) -> str:
+    if total <= 0:
+        return "[{0}] ???%".format("." * width)
+    pct = downloaded / total
+    filled = int(round(width * pct))
+    return "[{0}{1}] {2:3d}%".format("#" * filled, "." * (width - filled), int(pct * 100))
 
-    if filename is None:
-        filename = os.path.basename(url)
-
-    filepath = os.path.join(destination_folder, filename)
-
+# =========================
+# Download + checksum
+# =========================
+def head_content_length(url: str) -> int:
     try:
-        with requests.get(url, stream=True) as r:
+        r = requests.head(url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True)
+        if r.status_code == 200:
+            return int(r.headers.get("Content-Length", "0") or 0)
+    except Exception:
+        pass
+    return 0
+
+def download(url: str, dest: Path, expect_checksum: Optional[Tuple[str, str]] = None) -> bool:
+    """
+    Download `url` to `dest`.
+    expect_checksum: (algorithm, hexvalue) e.g. ("sha256", "abcd...")
+    """
+    tmp = dest.with_suffix(".part")
+    total = head_content_length(url)
+    try:
+        with requests.get(url, headers=HEADERS, stream=True, timeout=DOWNLOAD_TIMEOUT) as r:
             r.raise_for_status()
-            with open(filepath, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        print(f"Downloaded '{filename}' to '{destination_folder}'")
+            with open(tmp, "wb") as fh:
+                got = 0
+                last_display = 0
+                for chunk in r.iter_content(CHUNK):
+                    if not chunk:
+                        continue
+                    fh.write(chunk)
+                    got += len(chunk)
+                    # update display occasionally
+                    if got - last_display >= max(16384, total // 50 if total else 16384):
+                        print("\r" + ascii_progress(got, total), end="", flush=True)
+                        last_display = got
+                # final progress line
+                print("\r" + ascii_progress(got, total))
+        # checksum verification if requested
+        if expect_checksum:
+            alg, expected = expect_checksum
+            alg = alg.lower()
+            if alg not in ("sha256",):
+                print(Fore.YELLOW + f"[ WARN  ] Unsupported checksum algorithm: {alg}. Skipping verification.")
+            else:
+                h = hashlib.sha256()
+                with open(tmp, "rb") as fh:
+                    for block in iter(lambda: fh.read(65536), b""):
+                        h.update(block)
+                gothex = h.hexdigest()
+                if gothex.lower() != expected.lower():
+                    print(Fore.RED + f"[ ERROR ] Checksum mismatch for {dest.name} (expected {expected}, got {gothex})")
+                    tmp.unlink(missing_ok=True)
+                    return False
+                else:
+                    print(Fore.GREEN + f"[ DONE  ] Checksum verified ({alg})")
+        tmp.replace(dest)
+        print(Fore.GREEN + f"[ DONE  ] Downloaded: {dest}")
         return True
-    except requests.exceptions.RequestException as e:
-        print(f"Error downloading '{url}': {e}", file=sys.stderr)
+    except Exception as e:
+        print(Fore.RED + f"[ ERROR ] Download failed: {e}")
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
         return False
-    except IOError as e:
-        print(f"Error writing file '{filepath}': {e}", file=sys.stderr)
-        return False
 
-def list_packages(pkg_data):
-    if not pkg_data:
-        print("No packages found or unable to retrieve package list.")
+# =========================
+# Manifest handling
+# =========================
+def load_manifest_for_pkgfile(pkgfile: Path) -> Optional[Dict[str, Any]]:
+    """
+    Look for manifest alongside package file:
+    - pkgfile.with_suffix('.json')
+    - package name + '.manifest.json'
+    """
+    m1 = pkgfile.with_suffix(".json")
+    if m1.exists():
+        try:
+            return json.loads(m1.read_text())
+        except Exception:
+            print(Fore.RED + "[ ERROR ] Could not parse manifest for package.")
+            return None
+    # try other variants: <pkgfile>.manifest.json
+    m2 = pkgfile.with_suffix(".manifest.json")
+    if m2.exists():
+        try:
+            return json.loads(m2.read_text())
+        except Exception:
+            print(Fore.RED + "[ ERROR ] Could not parse manifest (manifest.json variant).")
+            return None
+    # try searching all manifests for one with matching filename or id
+    for j in PKG_DIR.glob("*.json"):
+        try:
+            jm = json.loads(j.read_text())
+            # if manifest contains filename or id that matches pkgfile name
+            if jm.get("filename") == pkgfile.name or jm.get("id") and jm.get("id") in pkgfile.name:
+                return jm
+        except Exception:
+            continue
+    print(Fore.YELLOW + "[ WARN  ] No manifest found for package file: " + str(pkgfile))
+    return None
+
+def manifest_from_repo_entry(entry: Dict[str, Any], pkg_filename: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    If package-list entry includes a 'manifest' URL, fetch it; else attempt url+'.json'
+    """
+    if not entry:
+        return None
+    manifest_url = entry.get("manifest")
+    if manifest_url:
+        try:
+            r = requests.get(manifest_url, headers=HEADERS, timeout=TIMEOUT)
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            print(Fore.YELLOW + "[ WARN  ] Could not fetch manifest from entry 'manifest' URL.")
+    # fallback: try to fetch download url + '.json'
+    dl = entry.get("download")
+    if dl:
+        try:
+            r = requests.get(dl + ".json", headers=HEADERS, timeout=TIMEOUT)
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            pass
+    # no manifest available
+    return None
+
+# =========================
+# Commands: list, view, download
+# =========================
+def list_pkgs():
+    data = fetch_json(PACKAGE_LIST_URL)
+    if not data:
+        print(Fore.RED + "[ ERROR ] Cannot load package list.")
         return
+    print(Fore.CYAN + "Available packages:")
+    for name, info in sorted(data.items()):
+        print(Fore.YELLOW + f"-> {name} " + Fore.WHITE + f"({info.get('version','?')})")
+        print("    " + info.get("description", "[No description available]"))
+        print("    id:", info.get("id", "N/A"))
+        print("    dependencies:")
+        try:
+            if info.get("dependencies") != []:
+                for dependency in info.get("dependencies"):
+                    print(f"\t\t{dependency}")
+            else:
+                print("\t\t[No dependencies]")
+        except Exception as e:
+            print(f"\t\t[Failed to retrieve: {e}]")
+        print("    installs to:", info.get("install_dir", "N/A"))
+        print("    install cmd:", info.get("install_cmd", "N/A"))
+        print("    uninstall cmd:", info.get("uninstall_cmd", "N/A"))
+        print("    sha256 hash:", info.get("sha256", "N/A"))
+        print("")
 
-    print("\n--- Available Packages ---")
-    for pkg_name, details in pkg_data.items():
-        print(f"  Name: {pkg_name}")
-        print(f"    Version: {details.get('version', 'N/A')}")
-        print(f"    Description: {details.get('description', 'N/A')}")
-        print(f"    Author: {details.get('author', 'N/A')}")
-        print(f"    Language: {details.get('lang', 'N/A')}")
-        print(f"    Type: {details.get('type', 'N/A')}")
-        print(f"    Dependencies: {details.get('dependencies', 'none')}")
-        print(f"    Download URL: {details.get('download', 'N/A')}")
-        print("-" * 30)
-
-def list_misc_files(misc_data):
-    if not misc_data:
-        print("No miscellaneous files found or unable to retrieve misc list.")
+def list_misc():
+    data = fetch_json(MISC_LIST_URL)
+    if not data:
+        print(Fore.RED + "[ ERROR ] Cannot load misc list.")
         return
+    print(Fore.CYAN + "Misc categories:")
+    for cat, items in sorted(data.items()):
+        print(Fore.MAGENTA + f"[{cat}]")
+        for name, det in sorted(items.items()):
+            print("  " + Fore.YELLOW + name + Fore.WHITE + " -> " + str(det.get("download", "N/A")))
+        print("")
 
-    print("\n--- Available Miscellaneous Files ---")
-    for category, items in misc_data.items():
-        print(f"  Category: {category.capitalize()}")
-        for item_name, details in items.items():
-            print(f"    Name: {item_name}")
-            print(f"      Author: {details.get('author', 'N/A')}")
-            print(f"      Download URL: {details.get('download', 'N/A')}")
-            print("-" * 30)
+def view_pkg(name: str):
+    # try treat name as installed id first
+    installed = load_installed()
+    # search installed manifests matching id or name
+    for inst_id, info in installed.items():
+        if inst_id == name or info.get("name") == name:
+            print(Fore.CYAN + f"Installed manifest for {name}:")
+            print(pretty(info.get("manifest", {})))
+            return
+    # else search pkg dir manifests
+    for j in PKG_DIR.glob("*.json"):
+        try:
+            jm = json.loads(j.read_text())
+            if jm.get("id") == name or jm.get("name") == name:
+                print(Fore.CYAN + f"Manifest file: {j}")
+                print(pretty(jm))
+                return
+        except Exception:
+            continue
+    print(Fore.YELLOW + "[ WARN  ] No manifest found for: " + name)
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: mpreg <command> [arguments]                                             ")
-        print("Commands:                                                                      ")
-        print("  list-pkgs                            - List available packages               ")
-        print("  list-misc                            - List available miscellaneous files    ")
-        print("  download-pkg <package_name>          - Download a specific package           ")
-        print("  download-misc <category> <item_name> - Download a specific miscellaneous file")
-        print("Saves downloaded files to:                                                     ")
-        print("  /etc/mpreg/pkgs                      - For packages                          ")
-        print("  /etc/mpreg/misc                      - For miscellaneous files               ")
-        sys.exit(1)
+def view_misc(category: str, item: str):
+    data = fetch_json(MISC_LIST_URL)
+    if not data:
+        print(Fore.RED + "[ ERROR ] Cannot fetch misc list.")
+        return
+    if category not in data:
+        print(Fore.RED + "[ ERROR ] No such category: " + category)
+        return
+    if item not in data[category]:
+        print(Fore.RED + "[ ERROR ] No such item in category: " + item)
+        return
+    print(Fore.CYAN + f"Details for {category}/{item}:")
+    print(pretty(data[category][item]))
 
-    command = sys.argv[1]
-
-    if command == "list-pkgs":
-        pkg_data = fetch_json_data(PACKAGE_LIST_URL)
-        list_packages(pkg_data)
-    elif command == "list-misc":
-        misc_data = fetch_json_data(MISC_LIST_URL)
-        list_misc_files(misc_data)
-    elif command == "download-pkg":
-        if len(sys.argv) < 3:
-            print("Usage: mpreg.py download-pkg <package_name>", file=sys.stderr)
-            sys.exit(1)
-        package_name = sys.argv[2]
-        pkg_data = fetch_json_data(PACKAGE_LIST_URL)
-        if pkg_data and package_name in pkg_data:
-            download_url = pkg_data[package_name].get("download")
-            if download_url and download_url != "soon":
-                print(f"Attempting to download package: {package_name}")
-                download_file(download_url, destination_folder="/etc/mpreg/pkgs", filename=package_name)
-            else:
-                if not download_url:
-                    print(f"Download URL for package '{package_name}' is not present or blank in the package list.", file=sys.stderr)
-                elif download_url == "soon":
-                    print(f"Download URL for package '{package_name}' is coming soon.", file=sys.stderr)
-        else:
-            if not pkg_data:
-                print(f"Package list is either empty or failed to download.", file=sys.stderr)
-            elif not package_name in pkg_data:
-                print(f"Package '{package_name}' not found.", file=sys.stderr)
-    elif command == "download-misc":
-        if len(sys.argv) < 4:
-            print("Usage: python3 mpreg.py download-misc <category> <item_name>", file=sys.stderr)
-            sys.exit(1)
-        category = sys.argv[2]
-        item_name = " ".join(sys.argv[3:])
-
-        misc_data = fetch_json_data(MISC_LIST_URL)
-        if misc_data and category in misc_data and item_name in misc_data[category]:
-            download_url = misc_data[category][item_name].get("download")
-            if download_url and download_url != "soon":
-                print(f"Attempting to download miscellaneous file: {item_name} from category: {category}")
-                download_file(download_url, destination_folder=f"downloads/misc/{category}", filename=os.path.basename(download_url))
-            else:
-                if not download_url:
-                    print(f"Download URL for miscellaneous item '{item_name}' in category '{category}' is not present or is blank in the miscellaneous files list.", file=sys.stderr)
-                elif download_url == "soon":
-                    print(f"Download URL for miscellaneous item '{item_name}' in category '{category}' is coming soon.")
-        else:
-            if not misc_data:
-                print(f"Miscellaneous files list is either empty or failed to download.", file=sys.stderr)
-            elif not category in misc_data:
-                print(f"Miscellaneous category '{category}' not found.", file=sys.stderr)
-            elif not item_name in misc_data[category]:
-                print(f"Miscellaneous item '{item_name}' in category '{category}' not found.", file=sys.stderr)
+def download_pkg(name: str):
+    data = fetch_json(PACKAGE_LIST_URL)
+    if not data or name not in data:
+        print(Fore.RED + f"[ ERROR ] Package '{name}' not found in repository.")
+        return
+    entry = data[name]
+    dl = entry.get("download")
+    if not dl or dl == "soon":
+        print(Fore.YELLOW + "[ WARN  ] No download URL for this package.")
+        return
+    # Determine filename: prefer 'filename' field, else safe(name) or basename
+    filename = entry.get("filename") or safe_name(name) or Path(dl).name
+    dest = PKG_DIR / filename
+    # Attempt to fetch manifest (manifest URL in entry or dl + .json)
+    manifest = manifest_from_repo_entry(entry, filename)
+    # If manifest includes checksum, prepare it
+    checksum = None
+    if manifest:
+        if "sha256" in manifest:
+            checksum = ("sha256", manifest["sha256"])
+        elif isinstance(manifest.get("checksum"), dict):
+            ch = manifest["checksum"]
+            if ch.get("algorithm","").lower() == "sha256" and ch.get("value"):
+                checksum = ("sha256", ch["value"])
+    print(Fore.WHITE + f"[ INFO  ] Downloading '{name}' to {dest}")
+    if download(dl, dest, expect_checksum=checksum):
+        # if manifest fetched, save it next to package
+        if manifest:
+            try:
+                mf = dest.with_suffix(".json")
+                mf.write_text(json.dumps(manifest, indent=2))
+                print(Fore.GREEN + "[ DONE  ] Manifest saved: " + str(mf))
+            except Exception:
+                print(Fore.YELLOW + "[ WARN  ] Could not save manifest.")
     else:
-        print(f"Unknown command: {command}", file=sys.stderr)
-        print("Run 'mpreg' without any arguments for usage details.", file=sys.stderr)
-        sys.exit(1)
+        print(Fore.RED + "[ ERROR ] Download failed.")
+
+def download_misc(category: str, item: str):
+    data = fetch_json(MISC_LIST_URL)
+    if not data or category not in data or item not in data[category]:
+        print(Fore.RED + "[ ERROR ] Misc entry not found.")
+        return
+    entry = data[category][item]
+    dl = entry.get("download")
+    if not dl or dl == "soon":
+        print(Fore.YELLOW + "[ WARN  ] No download URL for this item.")
+        return
+    folder = MISC_DIR / safe_name(category)
+    folder.mkdir(parents=True, exist_ok=True)
+    dest = folder / Path(dl).name
+    print(Fore.WHITE + f"[ INFO  ] Downloading misc '{item}' into {dest}")
+    if download(dl, dest, expect_checksum=None):
+        print(Fore.GREEN + "[ DONE  ] Misc downloaded.")
+    else:
+        print(Fore.RED + "[ ERROR ] Misc download failed.")
+
+# =========================
+# Installer / Uninstaller / Update logic
+# =========================
+def resolve_dependency(dep_name: str) -> bool:
+    """
+    Try to make sure dependency is present. dep_name can be a repo package key.
+    Returns True if dependency is available/installed after this call.
+    """
+    installed = load_installed()
+    # if installed by id or name
+    for inst_id, info in installed.items():
+        if inst_id == dep_name or info.get("name") == dep_name:
+            return True
+    # try to find package list and download
+    data = fetch_json(PACKAGE_LIST_URL)
+    if data and dep_name in data:
+        print(Fore.WHITE + f"[ INFO  ] Downloading dependency: {dep_name}")
+        download_pkg(dep_name)
+        # after download, we expect package to be present; installation not automatic here
+        return True
+    # try match by id in repo items
+    if data:
+        for pname, pdata in data.items():
+            if pdata.get("id") == dep_name:
+                download_pkg(pname)
+                return True
+    print(Fore.RED + f"[ ERROR ] Dependency '{dep_name}' not found.")
+    return False
+
+def run_shell_command(cmd: str, cwd: Optional[Path] = None) -> int:
+    print(Fore.CYAN + f"[  RUN  ] {cmd}")
+    try:
+        result = subprocess.run(cmd, shell=True, cwd=(str(cwd) if cwd else None))
+        return result.returncode
+    except Exception as e:
+        print(Fore.RED + f"[ ERROR ] Running command: {e}")
+        return 1
+
+def find_manifest_by_id_or_name(identifier: str) -> Optional[Tuple[Path, Dict[str, Any]]]:
+    # search PKG_DIR manifests and installed state
+    # Check installed state first
+    installed = load_installed()
+    if identifier in installed:
+        info = installed[identifier]
+        # manifest saved in info['manifest_file'] or info['pkgfile']
+        mfpath = Path(info.get("manifest_file")) if info.get("manifest_file") else None
+        if mfpath and mfpath.exists():
+            try:
+                return (mfpath, json.loads(mfpath.read_text()))
+            except Exception:
+                pass
+        # else return manifest embedded in state
+        if info.get("manifest"):
+            return (None, info.get("manifest"))
+    # search local pkg JSON manifests
+    for j in PKG_DIR.glob("*.json"):
+        try:
+            jm = json.loads(j.read_text())
+            if jm.get("id") == identifier or jm.get("name") == identifier:
+                return (j, jm)
+        except Exception:
+            continue
+    # search all manifests for matching id/name
+    for j in PKG_DIR.glob("*.json"):
+        try:
+            jm = json.loads(j.read_text())
+            if jm.get("id") == identifier or jm.get("name") == identifier:
+                return (j, jm)
+        except Exception:
+            continue
+    return None
+
+def get_installed_by_id(pkgid: str) -> Optional[Dict[str, Any]]:
+    inst = load_installed()
+    return inst.get(pkgid)
+
+def install_pkg(identifier: str):
+    """
+    identifier: package key from repo (name) or manifest id
+    """
+    data = fetch_json(PACKAGE_LIST_URL)
+    if not data:
+        print(Fore.RED + "[ ERROR ] Cannot fetch package list.")
+        return
+
+    # find repo entry by key or by id match
+    entry = None
+    keyname = None
+    if identifier in data:
+        entry = data[identifier]
+        keyname = identifier
+    else:
+        # search for id match
+        for k, v in data.items():
+            if v.get("id") == identifier:
+                entry = v
+                keyname = k
+                break
+    if not entry:
+        print(Fore.RED + f"[ ERROR ] Package '{identifier}' not found in repository.")
+        return
+
+    # attempt to fetch manifest via repo entry (and download package if missing)
+    manifest = manifest_from_repo_entry(entry)
+    filename = entry.get("filename") or safe_name(keyname) or Path(entry.get("download","")).name
+    pkgfile = PKG_DIR / filename
+
+    if not pkgfile.exists():
+        print(Fore.WHITE + f"[ INFO  ] Package file not present locally; downloading {keyname}...")
+        download_pkg(keyname)
+    else:
+        print(Fore.WHITE + f"[ INFO  ] Package file already exists: {pkgfile}")
+
+    # If no manifest fetched yet, try manifest next to pkg file
+    if not manifest:
+        manifest = load_manifest_for_pkgfile(pkgfile)
+    if not manifest:
+        print(Fore.YELLOW + "[ WARN  ] No manifest found. Aborting install.")
+        return
+
+    pkgid = manifest.get("id")
+    version = manifest.get("version", "0")
+    if not pkgid:
+        print(Fore.YELLOW + "[ WARN  ] Manifest missing 'id' field; using name as id.")
+        pkgid = manifest.get("name", keyname)
+
+    # Check installed state for same id
+    installed = load_installed()
+    current = installed.get(pkgid)
+    if current:
+        cur_ver = current.get("version")
+        if cur_ver == version:
+            print(Fore.GREEN + f"[ INFO  ] Version {version} of {pkgid} already installed.")
+            return
+        else:
+            # Update flow
+            print(Fore.CYAN + f"[ INFO  ] Update detected: {pkgid} {cur_ver} -> {version}")
+            # run uninstall for current
+            print(Fore.WHITE + f"[ INFO  ] Running uninstall for current version ({cur_ver})")
+            uninstall_pkg(pkgid)
+            # continue to install new version
+
+    # Resolve dependencies
+    deps = manifest.get("dependencies", []) or []
+    for dep in deps:
+        print(Fore.WHITE + f"[ INFO  ] Resolving dependency: {dep}")
+        if not resolve_dependency(dep):
+            print(Fore.RED + f"[ ERROR ] Failed to resolve dependency {dep}. Aborting.")
+            return
+    # checksum from manifest
+    checksum = None
+    if manifest.get("sha256"):
+        checksum = ("sha256", manifest["sha256"])
+    elif isinstance(manifest.get("checksum"), dict):
+        ch = manifest["checksum"]
+        if ch.get("algorithm","").lower() == "sha256" and ch.get("value"):
+            checksum = ("sha256", ch["value"])
+
+    # verify file exists and checksum
+    if not pkgfile.exists():
+        print(Fore.RED + "[ ERROR ] Expected package file does not exist after download. Aborting.")
+        return
+    if checksum:
+        print(Fore.WHITE + "[ INFO  ] Verifying checksum...")
+        if not download_verify_file(pkgfile, checksum):
+            print(Fore.RED + "[ ERROR ] Checksum failed. Aborting.")
+            return
+
+    # run install_cmd
+    install_cmd = manifest.get("install_cmd")
+    install_dir = manifest.get("install_dir", "/usr")
+    print(Fore.WHITE + f"[ INFO  ] Installing to {install_dir}")
+    os.makedirs(install_dir, exist_ok=True)
+    if install_cmd:
+        # allow use of placeholders in manifest: {pkgfile}, {install_dir}
+        cmd = install_cmd.format(pkgfile=str(pkgfile), install_dir=str(install_dir))
+        rc = run_shell_command(cmd)
+        if rc != 0:
+            print(Fore.RED + f"[ ERROR ] install_cmd failed with code {rc}")
+            return
+    else:
+        print(Fore.YELLOW + "[ WARN  ] No install_cmd provided in manifest. Nothing executed.")
+
+    # mark as installed
+    installed[pkgid] = {
+        "id": pkgid,
+        "name": manifest.get("name", keyname),
+        "version": version,
+        "manifest": manifest,
+        "manifest_file": str((pkgfile.with_suffix(".json") if pkgfile.with_suffix(".json").exists() else "")),
+        "pkgfile": str(pkgfile),
+        "installed_at": int(time.time())
+    }
+    save_installed(installed)
+    print(Fore.GREEN + f"[ DONE  ] Installed {pkgid} ({version}).")
+
+def download_verify_file(pkgfile: Path, checksum: Tuple[str, str]) -> bool:
+    """Verify a local file's checksum against expected."""
+    algo, expected = checksum
+    algo = algo.lower()
+    if algo == "sha256":
+        h = hashlib.sha256()
+        with open(pkgfile, "rb") as fh:
+            for block in iter(lambda: fh.read(65536), b""):
+                h.update(block)
+        got = h.hexdigest()
+        if got.lower() != expected.lower():
+            print(Fore.RED + f"[ ERROR ] Checksum mismatch: expected {expected}, got {got}")
+            return False
+        return True
+    else:
+        print(Fore.YELLOW + f"[ WARN  ] Unsupported checksum algorithm: {algo}")
+        return True
+
+def uninstall_pkg(identifier: str):
+    """
+    identifier can be package id or package name
+    """
+    installed = load_installed()
+    # find installed by id or name
+    found_id = None
+    for pid, info in installed.items():
+        if pid == identifier or info.get("name") == identifier:
+            found_id = pid
+            break
+    if not found_id:
+        print(Fore.YELLOW + "[ WARN  ] Package not installed: " + identifier)
+        return
+    info = installed[found_id]
+    manifest = info.get("manifest", {})
+    uninstall_cmd = manifest.get("uninstall_cmd")
+    if not uninstall_cmd:
+        print(Fore.YELLOW + "[ WARN  ] No uninstall_cmd in manifest; cannot automate uninstall.")
+        # still remove installed state
+        del installed[found_id]
+        save_installed(installed)
+        print(Fore.GREEN + f"[ DONE  ] Removed installed metadata for {found_id}.")
+        return
+    # allow placeholders
+    pkgfile = Path(info.get("pkgfile")) if info.get("pkgfile") else None
+    install_dir = manifest.get("install_dir", "/usr")
+    cmd = uninstall_cmd.format(pkgfile=str(pkgfile) if pkgfile else "", install_dir=install_dir)
+    print(Fore.WHITE + f"[ INFO  ] Running uninstall: {cmd}")
+    rc = run_shell_command(cmd)
+    if rc != 0:
+        print(Fore.RED + f"[ ERROR ] uninstall_cmd returned {rc}. Aborting state removal.")
+        return
+    # remove state
+    del installed[found_id]
+    save_installed(installed)
+    print(Fore.GREEN + f"[ DONE  ] Uninstalled {found_id}.")
+
+# =========================
+# Helper for update & cache info
+# =========================
+def cmd_update_lists():
+    print(Fore.WHITE + "[ INFO  ] Updating local caches...")
+    p = fetch_json(PACKAGE_LIST_URL)
+    m = fetch_json(MISC_LIST_URL)
+    if p is not None:
+        print(Fore.GREEN + "[ DONE  ] Package list cached.")
+    if m is not None:
+        print(Fore.GREEN + "[ DONE  ] Misc list cached.")
+    if p is None and m is None:
+        print(Fore.RED + "[ ERROR ] Update failed.")
+
+def cmd_cache_info():
+    print(Fore.CYAN + "Cache directory: " + str(CACHE_DIR))
+    for f in CACHE_DIR.iterdir():
+        try:
+            print(" -", f.name, f.stat().st_size, "bytes")
+        except Exception:
+            print(" -", f.name)
+
+# =========================
+# CLI wiring
+# =========================
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="mpreg", description="MrrpOS package manager (mpreg v7)")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("list-pkgs", help="List available packages")
+    sub.add_parser("list-misc", help="List available miscellaneous files")
+
+    dp = sub.add_parser("download-pkg", help="Download a package by repo key")
+    dp.add_argument("name", help="Repository package key (exact)")
+
+    dm = sub.add_parser("download-misc", help="Download a misc entry")
+    dm.add_argument("category")
+    dm.add_argument("item")
+
+    vp = sub.add_parser("view-pkg", help="View manifest for a downloaded package or installed id")
+    vp.add_argument("identifier")
+
+    vm = sub.add_parser("view-misc", help="View misc item details")
+    vm.add_argument("category")
+    vm.add_argument("item")
+
+    ip = sub.add_parser("install", help="Install a package by repo key or id")
+    ip.add_argument("identifier")
+
+    un = sub.add_parser("uninstall", help="Uninstall a package by id or name")
+    un.add_argument("identifier")
+
+    sub.add_parser("update", help="Update cached repo lists")
+    sub.add_parser("cache-info", help="Show cached list files")
+
+    return p
+
+def main(argv: Optional[list[str]] = None) -> int:
+    print_header()
+    ensure_dirs()
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    cmd = args.cmd
+    if cmd == "list-pkgs":
+        list_pkgs()
+    elif cmd == "list-misc":
+        list_misc()
+    elif cmd == "download-pkg":
+        download_pkg(args.name)
+    elif cmd == "download-misc":
+        download_misc(args.category, args.item)
+    elif cmd == "view-pkg":
+        view_pkg(args.identifier)
+    elif cmd == "view-misc":
+        view_misc(args.category, args.item)
+    elif cmd == "install":
+        install_pkg(args.identifier)
+    elif cmd == "uninstall":
+        uninstall_pkg(args.identifier)
+    elif cmd == "update":
+        cmd_update_lists()
+    elif cmd == "cache-info":
+        cmd_cache_info()
+    else:
+        parser.print_help()
+        return 1
+
+    return 0
 
 if __name__ == "__main__":
-    main()
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        print(Fore.YELLOW + "\n[ WARN  ] Operation aborted by user.")
+        raise SystemExit(1)
