@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# mpreg v7 – MrrpOS Package REGistrar
+# mpreg v7.1 – MrrpOS Package REGistrar
 # By ANW for MrrpOS
 
 from __future__ import annotations
@@ -487,11 +487,17 @@ def install_pkg(identifier: str):
     filename = entry.get("filename") or safe_name(keyname) or Path(entry.get("download","")).name
     pkgfile = PKG_DIR / filename
 
-    if not pkgfile.exists():
-        print(Fore.WHITE + f"[ INFO  ] Package file not present locally; downloading {keyname}...")
+    use_local = False
+    if pkgfile.exists():
+        print(Fore.WHITE + f"[ INFO  ] Local file '{filename}' already exists.")
+        choice = input(Fore.CYAN + "[ QUEST ] Install: (L)ocal version / (R)epository version? [I/R]: " + Style.RESET_ALL).lower().strip()
+        if choice == 'i':
+            use_local = True
+        else:
+            print(Fore.WHITE + "[ INFO  ] Re-downloading package from the repo...")
+
+    if not use_local:
         download_pkg(keyname)
-    else:
-        print(Fore.WHITE + f"[ INFO  ] Package file already exists: {pkgfile}")
 
     # If no manifest fetched yet, try manifest next to pkg file
     if not manifest:
@@ -655,6 +661,82 @@ def cmd_cache_info():
             print(" -", f.name)
 
 # =========================
+# Helpers for clearing cache and stuff
+# =========================
+def cache_clear():
+    """Clears everything in the cache folder."""
+    print(Fore.WHITE + f"[ INFO  ] Clearing cache: {CACHE_DIR}")
+    count = 0
+    for item in CACHE_DIR.iterdir():
+        try:
+            if item.is_file() or item.is_symlink():
+                item.unlink()
+            elif item.is_dir():
+                shutil.rmtree(item)
+            count += 1
+        except Exception as e:
+            print(Fore.RED + f"[ ERROR ] Failed to delete {item.name}: {e}")
+    print(Fore.GREEN + f"[ DONE  ] Removed {count} items from cache.")
+
+def local_remove(identifier: Optional[str] = None):
+    """Removes locally downloaded files (not manifests)."""
+    dirs = [PKG_DIR, MISC_DIR]
+    count = 0
+    if not identifier:
+        print(Fore.WHITE + "[ INFO  ] Removing ALL local downloaded files...")
+        for d in dirs:
+            for item in d.iterdir():
+                # Don't delete manifests via local-remove
+                if item.is_file() and not item.suffix == ".json":
+                    item.unlink()
+                    count += 1
+    else:
+        for d in dirs:
+            for item in d.rglob("*"):
+                if identifier in item.name and item.is_file() and not item.suffix == ".json":
+                    item.unlink()
+                    print(Fore.YELLOW + f"[ DONE  ] Removed: {item.name}")
+                    count += 1
+    print(Fore.GREEN + f"[ DONE  ] Removed {count} local files.")
+
+def manifest_remove(identifier: Optional[str] = None):
+    """Removes manifests, but blocks deletion if the package is installed."""
+    installed = load_installed()
+    # identify manifests that must be protected
+    protected_manifests = set()
+    for info in installed.values():
+        if info.get("manifest_file"):
+            protected_manifests.add(Path(info["manifest_file"]).resolve())
+        if info.get("pkgfile"):
+            p = Path(info["pkgfile"])
+            protected_manifests.add(p.with_suffix(".json").resolve())
+            protected_manifests.add(p.with_suffix(".manifest.json").resolve())
+
+    count = 0
+    to_delete = []
+    
+    if not identifier:
+        to_delete = list(PKG_DIR.glob("*.json"))
+    else:
+        for j in PKG_DIR.glob("*.json"):
+            try:
+                jm = json.loads(j.read_text())
+                if identifier == jm.get("id") or identifier == jm.get("name") or identifier in j.name:
+                    to_delete.append(j)
+            except:
+                if identifier in j.name: to_delete.append(j)
+
+    for manifest_path in to_delete:
+        abs_path = manifest_path.resolve()
+        if abs_path in protected_manifests:
+            print(Fore.RED + f"[ DENIED ] Cannot remove {manifest_path.name}: Package is currently installed.")
+        else:
+            manifest_path.unlink()
+            print(Fore.YELLOW + f"[ REMOVE ] {manifest_path.name}")
+            count += 1
+    print(Fore.GREEN + f"[ DONE  ] Removed {count} manifest(s).")
+
+# =========================
 # CLI wiring
 # =========================
 def build_parser() -> argparse.ArgumentParser:
@@ -687,6 +769,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("update", help="Update cached repo lists")
     sub.add_parser("cache-info", help="Show cached list files")
 
+    sub.add_parser("cache-clear", help="Clears everything in the cache folder")
+
+    lr = sub.add_parser("local-remove", help="Removes locally downloaded files")
+    lr.add_argument("identifier", nargs="?", help="File id or name (removes all if omitted)")
+
+    mr = sub.add_parser("manifest-remove", help="Removes manifests (blocked if package is installed)")
+    mr.add_argument("identifier", nargs="?", help="Manifest id or name (removes all if omitted)")
+
     return p
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -716,6 +806,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         cmd_update_lists()
     elif cmd == "cache-info":
         cmd_cache_info()
+    elif args.cmd == "cache-clear":
+        cache_clear()
+    elif args.cmd == "local-remove":
+        local_remove(args.identifier)
+    elif args.cmd == "manifest-remove":
+        manifest_remove(args.identifier)
     else:
         parser.print_help()
         return 1
