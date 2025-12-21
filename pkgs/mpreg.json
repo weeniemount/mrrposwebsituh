@@ -1,0 +1,10 @@
+{
+  "id": "mpreg",
+  "name": "mpreg",
+  "version": "7",
+  "dependencies": [],
+  "install_dir": "/bin",
+  "install_cmd": "cp -v {pkgfile} {install_dir}/mpreg; chmod +x {install_dir}/mpreg; mkdir -pv /etc/mpreg",
+  "uninstall_cmd": "rm -fv {install_dir}/mpreg; rm -rfv /etc/mpreg",
+  "sha256": "c73dcd4645d051423320955fe0430fe37b66dbc608d8615a1331e06c1d1ccfe1"
+}
