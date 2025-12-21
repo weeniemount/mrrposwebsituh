@@ -34,7 +34,7 @@
     "sha256": "fda13e6ad29df44247bc9b8edf6bb53d6a90699bfc254ada7c1e1236d1676592",
     "dependencies": [],
     "install_dir": "/bin",
-    "install_cmd": "cp -v {pkgfile} {install_dir}/garyrem; chmod +x {install_dir}/garyrem; mkdir -pv /etc/garyrem;",
+    "install_cmd": "cp -v {pkgfile} {install_dir}/garyrem; chmod +x {install_dir}/garyrem; mkdir -pv /etc/garyrem",
     "uninstall_cmd": "rm -fv /bin/garyrem; rm -rfv /etc/garyrem",
     "manifest": "https://mrrpos.pages.dev/pkgs/garyrem.json"
   },
@@ -47,7 +47,7 @@
     "sha256": "c73dcd4645d051423320955fe0430fe37b66dbc608d8615a1331e06c1d1ccfe1",
     "dependencies": [],
     "install_dir": "/bin",
-    "install_cmd": "cp -v {pkgfile} {install_dir}/mpreg; chmod +x {install_dir}/mpreg; mkdir -pv /etc/mpreg;",
+    "install_cmd": "cp -v {pkgfile} {install_dir}/mpreg; chmod +x {install_dir}/mpreg; mkdir -pv /etc/mpreg",
     "uninstall_cmd": "rm -fv /bin/mpreg; rm -rfv /etc/mpreg",
     "manifest": "https://mrrpos.pages.dev/pkgs/mpreg.json"
   }
