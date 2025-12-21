@@ -9,7 +9,7 @@
     "dependencies": [],
     "install_dir": "/bin",
     "install_cmd": "cp -v {pkgfile} {install_dir}/gary; chmod +x {install_dir}/gary",
-    "uninstall_cmd": "rm -fv /bin/gary",
+    "uninstall_cmd": "rm -fv {install_dir}/gary",
     "manifest": "https://mrrpos.pages.dev/pkgs/gary.json"
   },
   "garysay": {
@@ -22,7 +22,7 @@
     "dependencies": [],
     "install_dir": "/bin",
     "install_cmd": "cp -v {pkgfile} {install_dir}/garysay; chmod +x {install_dir}/garysay",
-    "uninstall_cmd": "rm -fv /bin/garysay",
+    "uninstall_cmd": "rm -fv {install_dir}/garysay",
     "manifest": "https://mrrpos.pages.dev/pkgs/garysay.json"
   },
   "garyrem": {
@@ -35,7 +35,7 @@
     "dependencies": [],
     "install_dir": "/bin",
     "install_cmd": "cp -v {pkgfile} {install_dir}/garyrem; chmod +x {install_dir}/garyrem; mkdir -pv /etc/garyrem",
-    "uninstall_cmd": "rm -fv /bin/garyrem; rm -rfv /etc/garyrem",
+    "uninstall_cmd": "rm -fv {install_dir}/garyrem; rm -rfv /etc/garyrem",
     "manifest": "https://mrrpos.pages.dev/pkgs/garyrem.json"
   },
   "mpreg": {
@@ -48,7 +48,7 @@
     "dependencies": [],
     "install_dir": "/bin",
     "install_cmd": "cp -v {pkgfile} {install_dir}/mpreg; chmod +x {install_dir}/mpreg; mkdir -pv /etc/mpreg",
-    "uninstall_cmd": "rm -fv /bin/mpreg; rm -rfv /etc/mpreg",
+    "uninstall_cmd": "rm -fv {install_dir}/mpreg; rm -rfv /etc/mpreg",
     "manifest": "https://mrrpos.pages.dev/pkgs/mpreg.json"
   }
 }
