@@ -6,40 +6,49 @@
     "download": "https://mrrpos.pages.dev/pkgs/gary",
     "filename": "gary",
     "sha256": "135f77b12fc3bfe41a0ff9829b164dfcc89db991df6af352fe4ffddfdc0d2fdd",
-    "dependencies": ["none"],
+    "dependencies": [],
     "install_dir": "/bin",
     "install_cmd": "cp -v {pkgfile} {install_dir}/gary; chmod +x {install_dir}/gary",
     "uninstall_cmd": "rm -fv /bin/gary",
     "manifest": "https://mrrpos.pages.dev/pkgs/gary.json"
   },
   "garysay": {
-    "download": "https://mrrpos.pages.dev/pkgs/garyrem",
+    "id": "garysay",
     "version": "3",
     "description": "A replica of the cowsay program but with Gary the cat.",
-    "lang": "python",
-    "dependencies": "none",
-    "type": "executable",
-    "author": "ANW"
+    "download": "https://mrrpos.pages.dev/pkgs/garysay",
+    "filename": "garysay",
+    "sha256": "472819a7d842079d63423dc034ca4466bde2192bbe9eb15244b809fb90d647b4",
+    "dependencies": [],
+    "install_dir": "/bin",
+    "install_cmd": "cp -v {pkgfile} {install_dir}/garysay; chmod +x {install_dir}/garysay",
+    "uninstall_cmd": "rm -fv /bin/garysay",
+    "manifest": "https://mrrpos.pages.dev/pkgs/garysay.json"
   },
   "garyrem": {
-    "download": "https://mrrpos.pages.dev/pkgs/garyrem",
+    "id": "garyrem",
     "version": "3",
     "description": "A global program for remembering stuff and messages.",
-    "lang": "python",
-    "dependencies": "none",
-    "type": "executable",
-    "author": "ANW"
+    "download": "https://mrrpos.pages.dev/pkgs/garyrem",
+    "filename": "garyrem",
+    "sha256": "fda13e6ad29df44247bc9b8edf6bb53d6a90699bfc254ada7c1e1236d1676592",
+    "dependencies": [],
+    "install_dir": "/bin",
+    "install_cmd": "cp -v {pkgfile} {install_dir}/garyrem; chmod +x {install_dir}/garyrem; mkdir -pv /etc/garyrem;",
+    "uninstall_cmd": "rm -fv /bin/garyrem; rm -rfv /etc/garyrem",
+    "manifest": "https://mrrpos.pages.dev/pkgs/garyrem.json"
   },
   "mpreg": {
+    "id": "mpreg",
+    "version": "7",
+    "description": "The MrrpOS Package REGistrar",
     "download": "https://mrrpos.pages.dev/pkgs/mpreg",
-    "version": "2",
-    "description": "A package downloader (NOT INSTALLER) for MrrpOS.",
-    "lang": "python",
-    "dependencies": {
-      "python-modules": "requests",
-      "misc": "wget"
-    },
-    "type": "executable",
-    "author": "ANW"
+    "filename": "mpreg",
+    "sha256": "c73dcd4645d051423320955fe0430fe37b66dbc608d8615a1331e06c1d1ccfe1",
+    "dependencies": [],
+    "install_dir": "/bin",
+    "install_cmd": "cp -v {pkgfile} {install_dir}/mpreg; chmod +x {install_dir}/mpreg; mkdir -pv /etc/mpreg;",
+    "uninstall_cmd": "rm -fv /bin/mpreg; rm -rfv /etc/mpreg",
+    "manifest": "https://mrrpos.pages.dev/pkgs/mpreg.json"
   }
 }
