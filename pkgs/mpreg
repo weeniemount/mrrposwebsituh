@@ -54,7 +54,7 @@ TIMEOUT = 10
 # =========================
 def print_header():
     print(Fore.WHITE + Style.BRIGHT + "+--------------------------------------------------------+")
-    print(Fore.WHITE + Style.BRIGHT + "| [ mpreg v7 - The MrrpOS package manager. ]             |")
+    print(Fore.WHITE + Style.BRIGHT + "| [ mpreg v7.1 - The MrrpOS package manager. ]           |")
     print(Fore.WHITE + Style.BRIGHT + "| If any issues found, please contact MrrpOS devs.       |")
     print(Fore.WHITE + Style.BRIGHT + "| By ANW, for MrrpOS. (https://anw.is-a.dev)             |")
     print(Fore.WHITE + Style.BRIGHT + "| Special thanks: GattoDev for https://mrrpos.pages.dev! |")
