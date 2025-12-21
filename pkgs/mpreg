@@ -45,7 +45,7 @@ PACKAGE_LIST_URL = "https://mrrpos.pages.dev/pkgs/pkg-list.json"
 MISC_LIST_URL = "https://mrrpos.pages.dev/misc/misc-list.json"
 HEADERS = {"User-Agent": "mpreg/7 (MrrpOS)"}
 
-CHUNK = 8192
+CHUNK = 128
 DOWNLOAD_TIMEOUT = 20
 TIMEOUT = 10
 
@@ -117,10 +117,15 @@ def fetch_json(url: str) -> Optional[Dict[str, Any]]:
 # =========================
 def ascii_progress(downloaded: int, total: int, width: int = 40) -> str:
     if total <= 0:
-        return "[{0}] ???%".format("." * width)
+        return Fore.WHITE + f"[{'.' * width}] {downloaded} bytes ({(downloaded / 1024):.1f} KB)"
+
     pct = downloaded / total
+    if pct > 1.0: pct = 1.0
+
     filled = int(round(width * pct))
-    return "[{0}{1}] {2:3d}%".format("#" * filled, "." * (width - filled), int(pct * 100))
+    bar = "#" * filled + "." * (width - filled)
+
+    return Fore.CYAN + f"[{bar}] {downloaded} of {total} bytes ({(downloaded / 1024):.1f} of {(total / 1024):.1f} KB) | {int(pct * 100):3d}%"
 
 # =========================
 # Download + checksum
@@ -144,19 +149,19 @@ def download(url: str, dest: Path, expect_checksum: Optional[Tuple[str, str]] = 
     try:
         with requests.get(url, headers=HEADERS, stream=True, timeout=DOWNLOAD_TIMEOUT) as r:
             r.raise_for_status()
+            
+            # retry to get content length
+            if total <= 0:
+                total = int(r.headers.get("Content-Length", 0))
+
             with open(tmp, "wb") as fh:
                 got = 0
-                last_display = 0
                 for chunk in r.iter_content(CHUNK):
                     if not chunk:
                         continue
                     fh.write(chunk)
                     got += len(chunk)
-                    # update display occasionally
-                    if got - last_display >= max(16384, total // 50 if total else 16384):
-                        print("\r" + ascii_progress(got, total), end="", flush=True)
-                        last_display = got
-                # final progress line
+                    print("\r" + ascii_progress(got, total), end="", flush=True)
                 print("\r" + ascii_progress(got, total))
         # checksum verification if requested
         if expect_checksum:
