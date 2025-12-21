@@ -1,7 +1,7 @@
 {
   "id": "mpreg",
   "name": "mpreg",
-  "version": "7",
+  "version": "7.1",
   "dependencies": [],
   "install_dir": "/bin",
   "install_cmd": "cp -v {pkgfile} {install_dir}/mpreg; chmod +x {install_dir}/mpreg; mkdir -pv /etc/mpreg",
