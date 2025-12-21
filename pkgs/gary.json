@@ -1,0 +1,10 @@
+{
+  "id": "gary",
+  "name": "gary",
+  "version": "2",
+  "dependencies": [],
+  "install_dir": "/bin",
+  "install_cmd": "cp -v {pkgfile} {install_dir}/gary; chmod +x {install_dir}/gary",
+  "uninstall_cmd": "rm -fv {install_dir}/gary",
+  "sha256": "135f77b12fc3bfe41a0ff9829b164dfcc89db991df6af352fe4ffddfdc0d2fdd"
+}
