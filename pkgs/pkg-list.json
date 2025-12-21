@@ -1,12 +1,16 @@
 {
   "gary": {
-    "download": "https://mrrpos.pages.dev/pkgs/gary",
+    "id": "gary",
     "version": "2",
     "description": "Prints a random gary string.",
-    "lang": "python",
-    "dependencies": "none",
-    "type": "executable",
-    "author": "ANW"
+    "download": "https://mrrpos.pages.dev/pkgs/gary",
+    "filename": "gary",
+    "sha256": "135f77b12fc3bfe41a0ff9829b164dfcc89db991df6af352fe4ffddfdc0d2fdd",
+    "dependencies": ["none"],
+    "install_dir": "/bin",
+    "install_cmd": "cp -v {pkgfile} {install_dir}/gary; chmod +x {install_dir}/gary",
+    "uninstall_cmd": "rm -fv /bin/gary",
+    "manifest": "https://mrrpos.pages.dev/pkgs/gary.json"
   },
   "garysay": {
     "download": "https://mrrpos.pages.dev/pkgs/garyrem",
