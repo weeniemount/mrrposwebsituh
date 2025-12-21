@@ -40,7 +40,7 @@
   },
   "mpreg": {
     "id": "mpreg",
-    "version": "7",
+    "version": "7.1",
     "description": "The MrrpOS Package REGistrar",
     "download": "https://mrrpos.pages.dev/pkgs/mpreg",
     "filename": "mpreg",
