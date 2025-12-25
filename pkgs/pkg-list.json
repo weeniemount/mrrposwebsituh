@@ -50,5 +50,18 @@
     "install_cmd": "cp -v {pkgfile} {install_dir}/mpreg; chmod +x {install_dir}/mpreg; mkdir -pv /etc/mpreg",
     "uninstall_cmd": "rm -fv {install_dir}/mpreg; rm -rfv /etc/mpreg",
     "manifest": "https://mrrpos.pages.dev/pkgs/mpreg.json"
+  },
+  "googleballs": {
+    "id": "googleballs",
+    "version": "1",
+    "description": "Google Balls in your terminal real!!!!!",
+    "download": "https://mrrpos.pages.dev/pkgs/googleballs",
+    "filename": "googleballs",
+    "sha256": "fdcb5bcb9141ed331aeca8ceafd617e8d19c9649be0571e6d33b2f4d2ba98666",
+    "dependencies": [],
+    "install_dir": "/bin",
+    "install_cmd": "cp -v {pkgfile} {install_dir}/googleballs; chmod +x {install_dir}/googleballs; mkdir -pv /etc/googleballs",
+    "uninstall_cmd": "rm -fv {install_dir}/googleballs; rm -rfv /etc/googleballs",
+    "manifest": "https://mrrpos.pages.dev/pkgs/googleballs.json"
   }
 }

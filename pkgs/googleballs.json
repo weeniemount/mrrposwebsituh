@@ -1,0 +1,10 @@
+{
+  "id": "googleballs",
+  "name": "googleballs",
+  "version": "1",
+  "dependencies": [],
+  "install_dir": "/bin",
+  "install_cmd": "cp -v {pkgfile} {install_dir}/googleballs; chmod +x {install_dir}/googleballs",
+  "uninstall_cmd": "rm -fv {install_dir}/googleballs",
+  "sha256": "fdcb5bcb9141ed331aeca8ceafd617e8d19c9649be0571e6d33b2f4d2ba98666"
+}
